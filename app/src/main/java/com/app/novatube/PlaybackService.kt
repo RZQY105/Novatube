@@ -19,16 +19,21 @@ class PlaybackService : MediaSessionService() {
     @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
+        YouTubeHelper.init(this)
 
         val audioAttributes = AudioAttributes.Builder()
             .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
             .setUsage(C.USAGE_MEDIA)
             .build()
 
-        // Selalu mengikuti User-Agent dari klien yang berhasil mengekstrak stream
         val dynamicDataSourceFactory = DataSource.Factory {
+            val headers = mutableMapOf<String, String>()
+            if (YouTubeHelper.activeCookie.isNotBlank()) {
+                headers["Cookie"] = YouTubeHelper.activeCookie
+            }
             DefaultHttpDataSource.Factory()
                 .setUserAgent(YouTubeHelper.activeUserAgent)
+                .setDefaultRequestProperties(headers)
                 .setAllowCrossProtocolRedirects(true)
                 .createDataSource()
         }
