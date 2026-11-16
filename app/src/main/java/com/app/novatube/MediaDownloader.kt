@@ -21,7 +21,7 @@ object MediaDownloader {
             val subPath = "NovaTube/${safeName}_${System.currentTimeMillis()}.$ext"
 
             val request = DownloadManager.Request(Uri.parse(url))
-                .addRequestHeader("User-Agent", YouTubeHelper.STREAM_USER_AGENT)
+                .addRequestHeader("User-Agent", YouTubeHelper.activeUserAgent)
                 .setTitle(if (audioOnly) "Audio: $title" else "Video: $title")
                 .setDescription("Menyimpan ke perangkat...")
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
