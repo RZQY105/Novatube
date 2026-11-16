@@ -5,6 +5,7 @@ import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -24,12 +25,16 @@ class PlaybackService : MediaSessionService() {
             .setUsage(C.USAGE_MEDIA)
             .build()
 
-        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(YouTubeHelper.STREAM_USER_AGENT)
-            .setAllowCrossProtocolRedirects(true)
+        // Selalu mengikuti User-Agent dari klien yang berhasil mengekstrak stream
+        val dynamicDataSourceFactory = DataSource.Factory {
+            DefaultHttpDataSource.Factory()
+                .setUserAgent(YouTubeHelper.activeUserAgent)
+                .setAllowCrossProtocolRedirects(true)
+                .createDataSource()
+        }
 
         val player = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(httpDataSourceFactory))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(dynamicDataSourceFactory))
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
             .build()
