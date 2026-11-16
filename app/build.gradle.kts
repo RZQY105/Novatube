@@ -23,6 +23,7 @@ android {
     }
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -37,6 +38,8 @@ android {
 }
 
 dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.2")
+
     implementation(platform("androidx.compose:compose-bom:2024.10.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
@@ -50,7 +53,11 @@ dependencies {
     implementation("androidx.media3:media3-session:$media3Version")
     implementation("androidx.media3:media3-ui:$media3Version")
 
-    // ListenableFuture & Gambar Thumbnail
+    // YouTube Stream Extractor & HTTP Client
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.24.2")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // ListenableFuture & Thumbnail
     implementation("com.google.guava:guava:33.3.1-android")
     implementation("io.coil-kt:coil-compose:2.7.0")
 }
