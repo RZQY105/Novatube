@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ComponentName
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -14,11 +15,13 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Headphones
-import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,12 +31,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -41,42 +45,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
-
-data class MediaEntry(
-    val id: String,
-    val title: String,
-    val author: String,
-    val duration: String,
-    val thumbnailUrl: String,
-    val streamUrl: String
-)
-
-val defaultCatalog = listOf(
-    MediaEntry(
-        id = "1",
-        title = "Big Buck Bunny (1080p Full Stream)",
-        author = "Blender Studio",
-        duration = "09:56",
-        thumbnailUrl = "https://peach.blender.org/wp-content/uploads/title_anouncement.jpg?x11217",
-        streamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-    ),
-    MediaEntry(
-        id = "2",
-        title = "Sintel - Fantasy Short Film",
-        author = "Blender Foundation",
-        duration = "14:48",
-        thumbnailUrl = "https://durian.blender.org/wp-content/uploads/2010/06/05.8b_comp_000272.jpg",
-        streamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4"
-    ),
-    MediaEntry(
-        id = "3",
-        title = "Tears of Steel - Sci-Fi Open Movie",
-        author = "Mango Open Movie",
-        duration = "12:14",
-        thumbnailUrl = "https://mango.blender.org/wp-content/uploads/2012/09/01_thom_celia_bridge.jpg",
-        streamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4"
-    )
-)
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -104,14 +73,27 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun NovaTubeApp() {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val scope = rememberCoroutineScope()
+
     var controller by remember { mutableStateOf<MediaController?>(null) }
-    var catalog by remember { mutableStateOf(defaultCatalog) }
-    var activeMedia by remember { mutableStateOf(defaultCatalog.first()) }
+    var catalog by remember { mutableStateOf<List<MediaEntry>>(emptyList()) }
+    var activeMedia by remember {
+        mutableStateOf(
+            MediaEntry(
+                id = "welcome",
+                title = "Cari video atau tempel link YouTube di bawah",
+                author = "NovaTube",
+                duration = "00:00",
+                thumbnailUrl = "",
+                pageUrl = ""
+            )
+        )
+    }
     var isAudioOnly by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
-    var showUrlDialog by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(false) }
 
-    // Minta izin notifikasi di Android 13+ agar pemutar latar belakang tetap muncul di layar kunci
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { }
@@ -120,17 +102,22 @@ fun NovaTubeApp() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+        // Muat daftar video populer awal
+        isLoading = true
+        runCatching {
+            YouTubeHelper.searchVideos("trending indonesia")
+        }.onSuccess { results ->
+            catalog = results
+        }
+        isLoading = false
     }
 
-    // Hubungkan UI dengan PlaybackService
     DisposableEffect(Unit) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
 
         future.addListener({
-            val mediaController = future.get()
-            controller = mediaController
-            startPlayback(mediaController, activeMedia)
+            controller = future.get()
         }, ContextCompat.getMainExecutor(context))
 
         onDispose {
@@ -138,16 +125,56 @@ fun NovaTubeApp() {
         }
     }
 
-    val filteredList = remember(catalog, searchQuery) {
-        if (searchQuery.isBlank()) catalog
-        else catalog.filter {
-            it.title.contains(searchQuery, ignoreCase = true) ||
-                it.author.contains(searchQuery, ignoreCase = true)
+    fun playEntry(entry: MediaEntry) {
+        scope.launch {
+            isLoading = true
+            try {
+                val readyMedia = if (entry.videoStreamUrl.isBlank() && entry.pageUrl.isNotBlank()) {
+                    YouTubeHelper.extractStreams(entry.pageUrl)
+                } else {
+                    entry
+                }
+                activeMedia = readyMedia
+                controller?.let { startPlayback(it, readyMedia, isAudioOnly) }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Gagal memuat video: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                isLoading = false
+            }
+        }
+    }
+
+    fun handleSearchOrUrl() {
+        val input = searchQuery.trim()
+        if (input.isBlank()) return
+        focusManager.clearFocus()
+
+        scope.launch {
+            isLoading = true
+            try {
+                if (YouTubeHelper.isYouTubeUrl(input)) {
+                    // Langsung ekstrak & putar tautan youtu.be / youtube.com
+                    val extracted = YouTubeHelper.extractStreams(input)
+                    activeMedia = extracted
+                    catalog = listOf(extracted) + catalog.filterNot { it.id == extracted.id }
+                    controller?.let { startPlayback(it, extracted, isAudioOnly) }
+                } else {
+                    // Cari video YouTube berdasarkan kata kunci
+                    val results = YouTubeHelper.searchVideos(input)
+                    catalog = results
+                    if (results.isEmpty()) {
+                        Toast.makeText(context, "Tidak ada hasil ditemukan", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Gagal memproses: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                isLoading = false
+            }
         }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Header Aplikasi + Input URL
         TopAppBar(
             title = {
                 Text(
@@ -157,18 +184,20 @@ fun NovaTubeApp() {
                 )
             },
             actions = {
-                IconButton(onClick = { showUrlDialog = true }) {
-                    Icon(
-                        imageVector = Icons.Default.Link,
-                        contentDescription = "Putar URL",
-                        tint = Color.White
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .padding(end = 16.dp)
+                            .size(22.dp),
+                        strokeWidth = 2.5.dp,
+                        color = Color(0xFFFF3D00)
                     )
                 }
             },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0F0F0F))
         )
 
-        // Pemutar Video / Tampilan Mode Audio Saja
+        // Area Pemutar Video / Mode Suara Saja
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -176,7 +205,7 @@ fun NovaTubeApp() {
                 .background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
-            if (!isAudioOnly && controller != null) {
+            if (!isAudioOnly && controller != null && activeMedia.videoStreamUrl.isNotBlank()) {
                 AndroidView(
                     factory = { ctx ->
                         PlayerView(ctx).apply {
@@ -201,12 +230,12 @@ fun NovaTubeApp() {
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Mode Suara Saja Aktif",
+                        text = if (isAudioOnly) "Mode Suara Saja Aktif" else "Siap Memutar",
                         color = Color.White,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Tetap berjalan saat keluar aplikasi atau layar mati",
+                        text = "Suara tetap jalan saat aplikasi ditutup atau layar mati",
                         color = Color.LightGray,
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -214,7 +243,7 @@ fun NovaTubeApp() {
             }
         }
 
-        // Judul & Tombol Kontrol (Audio Saja, Simpan Video, Simpan Suara)
+        // Info Video & Tombol Kontrol
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Text(
                 text = activeMedia.title,
@@ -240,11 +269,11 @@ fun NovaTubeApp() {
                     selected = isAudioOnly,
                     onClick = {
                         isAudioOnly = !isAudioOnly
-                        controller?.let { player ->
-                            player.trackSelectionParameters = player.trackSelectionParameters
-                                .buildUpon()
-                                .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, isAudioOnly)
-                                .build()
+                        if (activeMedia.videoStreamUrl.isNotBlank()) {
+                            controller?.let { player ->
+                                val currentPos = player.currentPosition
+                                startPlayback(player, activeMedia, isAudioOnly, currentPos)
+                            }
                         }
                     },
                     leadingIcon = {
@@ -258,10 +287,11 @@ fun NovaTubeApp() {
                 )
 
                 FilledTonalButton(
+                    enabled = activeMedia.videoStreamUrl.isNotBlank(),
                     onClick = {
                         MediaDownloader.download(
                             context = context,
-                            url = activeMedia.streamUrl,
+                            url = activeMedia.videoStreamUrl,
                             title = activeMedia.title,
                             audioOnly = false
                         )
@@ -274,10 +304,11 @@ fun NovaTubeApp() {
                 }
 
                 FilledTonalButton(
+                    enabled = activeMedia.audioStreamUrl.isNotBlank(),
                     onClick = {
                         MediaDownloader.download(
                             context = context,
-                            url = activeMedia.streamUrl,
+                            url = activeMedia.audioStreamUrl,
                             title = activeMedia.title,
                             audioOnly = true
                         )
@@ -291,12 +322,25 @@ fun NovaTubeApp() {
             }
         }
 
-        // Kolom Pencarian
+        // Kolom Pencarian + Tempel Link YouTube
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("Cari video atau channel...") },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            placeholder = { Text("Cari video atau tempel link youtu.be...") },
+            leadingIcon = {
+                IconButton(onClick = { handleSearchOrUrl() }) {
+                    Icon(Icons.Default.Search, contentDescription = "Cari")
+                }
+            },
+            trailingIcon = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { searchQuery = "" }) {
+                        Icon(Icons.Default.Close, contentDescription = "Hapus")
+                    }
+                }
+            },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { handleSearchOrUrl() }),
             singleLine = true,
             shape = RoundedCornerShape(24.dp),
             modifier = Modifier
@@ -306,16 +350,13 @@ fun NovaTubeApp() {
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Daftar Video
+        // Daftar Video Hasil Pencarian
         LazyColumn(modifier = Modifier.fillMaxSize()) {
-            items(filteredList) { item ->
+            items(catalog) { item ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
-                            activeMedia = item
-                            controller?.let { startPlayback(it, item) }
-                        }
+                        .clickable { playEntry(item) }
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -362,74 +403,28 @@ fun NovaTubeApp() {
             }
         }
     }
-
-    // Dialog Putar URL Kustom
-    if (showUrlDialog) {
-        var customTitle by remember { mutableStateOf("") }
-        var customUrl by remember { mutableStateOf("") }
-
-        AlertDialog(
-            onDismissRequest = { showUrlDialog = false },
-            title = { Text("Putar Tautan Stream") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = customTitle,
-                        onValueChange = { customTitle = it },
-                        label = { Text("Judul Media") },
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = customUrl,
-                        onValueChange = { customUrl = it },
-                        label = { Text("URL (.mp4 / .m3u8 / .mp3 / .m4a)") },
-                        singleLine = true
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        if (customUrl.isNotBlank()) {
-                            val newEntry = MediaEntry(
-                                id = System.currentTimeMillis().toString(),
-                                title = customTitle.ifBlank { "Custom Stream" },
-                                author = "Direct Link",
-                                duration = "LIVE/STREAM",
-                                thumbnailUrl = "",
-                                streamUrl = customUrl.trim()
-                            )
-                            catalog = listOf(newEntry) + catalog
-                            activeMedia = newEntry
-                            controller?.let { startPlayback(it, newEntry) }
-                            showUrlDialog = false
-                        }
-                    }
-                ) {
-                    Text("Putar")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showUrlDialog = false }) {
-                    Text("Batal")
-                }
-            }
-        )
-    }
 }
 
-private fun startPlayback(player: Player, media: MediaEntry) {
+private fun startPlayback(
+    player: Player,
+    media: MediaEntry,
+    audioOnly: Boolean,
+    startPositionMs: Long = 0L
+) {
+    val targetUrl = if (audioOnly) media.audioStreamUrl else media.videoStreamUrl
+    if (targetUrl.isBlank()) return
+
     val metadata = MediaMetadata.Builder()
         .setTitle(media.title)
         .setArtist(media.author)
         .build()
 
     val item = MediaItem.Builder()
-        .setUri(media.streamUrl)
+        .setUri(targetUrl)
         .setMediaMetadata(metadata)
         .build()
 
-    player.setMediaItem(item)
+    player.setMediaItem(item, startPositionMs)
     player.prepare()
     player.play()
 }
