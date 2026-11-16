@@ -21,6 +21,7 @@ object MediaDownloader {
             val subPath = "NovaTube/${safeName}_${System.currentTimeMillis()}.$ext"
 
             val request = DownloadManager.Request(Uri.parse(url))
+                .addRequestHeader("User-Agent", YouTubeHelper.STREAM_USER_AGENT)
                 .setTitle(if (audioOnly) "Audio: $title" else "Video: $title")
                 .setDescription("Menyimpan ke perangkat...")
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
@@ -34,7 +35,7 @@ object MediaDownloader {
             val lokasi = if (audioOnly) "Music/NovaTube" else "Movies/NovaTube"
             Toast.makeText(context, "Mengunduh ke folder $lokasi", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            Toast.makeText(context, "URL tidak valid untuk diunduh", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Gagal mengunduh: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 }
